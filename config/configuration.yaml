@@ -94,11 +94,17 @@ light:
               entity_id: input_boolean.light_assumed_on
 
         # 明るさスライダー
+        # 開始時にBH1750を高速モードに切り替え、完了後に通常モードに戻す
         # count:10 固定ループ + 目標到達したら stop で打ち切り
         set_level:
           - variables:
               target_lux: >
                 {{ ((brightness | int - 10) / 245.0 * (205 - 38) + 38) | int }}
+          # センサーを高速モードに切り替え（1秒間隔）
+          - service: mqtt.publish
+            data:
+              topic: home/bh1750/control
+              payload: "fast"
           # 全灯でなければまずONにする
           - if:
               - condition: template
@@ -118,7 +124,7 @@ light:
                 then:
                   - service: shell_command.send_light_step
                   - delay: "00:00:01"
-          # count:10 ループ：目標照度に達したら stop
+          # フィードバックループ（最大10回）
           - repeat:
               count: 10
               sequence:
@@ -139,6 +145,11 @@ light:
                       sequence:
                         - service: shell_command.send_light_down
                         - delay: "00:00:01"
+          # センサーを通常モードに戻す
+          - service: mqtt.publish
+            data:
+              topic: home/bh1750/control
+              payload: "normal"
 
 ####################################
 # スクリプト（ダッシュボード用ボタン）
