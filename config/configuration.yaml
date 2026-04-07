@@ -1,4 +1,3 @@
-
 # Loads default set of integrations. Do not remove.
 default_config:
 
@@ -13,12 +12,11 @@ scene: !include scenes.yaml
 ####################################
 
 # 1. 赤外線コマンドの定義（実体）
-# 1. 赤外線コマンド（ここは今まで通り）
+# IRコードは config/ir/ ディレクトリに集約
 shell_command:
-  send_light_step: "ir-ctl -d /dev/lirc0 --send=/config/light_step.txt"
-  # 明るさ調整用（あれば）
-  send_light_up: "ir-ctl -d /dev/lirc0 --send=/config/light_up.txt"
-  send_light_down: "ir-ctl -d /dev/lirc0 --send=/config/light_down.txt"
+  send_light_step: "ir-ctl -d /dev/lirc0 --send=/config/ir/light_step.txt"
+  send_light_up:   "ir-ctl -d /dev/lirc0 --send=/config/ir/light_up.txt"
+  send_light_down: "ir-ctl -d /dev/lirc0 --send=/config/ir/light_down.txt"
 
 # 2. ロジック本体（ここがヘルパー連携の心臓部）
 light:
@@ -208,4 +206,3 @@ mqtt:
       state_topic: "home/bme280"
       unit_of_measurement: "hPa"
       value_template: "{{ value_json.pressure }}"
-
