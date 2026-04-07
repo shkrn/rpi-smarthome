@@ -206,3 +206,9 @@ mqtt:
       state_topic: "home/bme280"
       unit_of_measurement: "hPa"
       value_template: "{{ value_json.pressure }}"
+    - name: "MH-Z19E"
+      state_topic: "home/mhz19"
+      unit_of_measurement: "ppm"
+      value_template: "{{ value_json.co2 }}"
+      device_class: carbon_dioxide
+      state_class: measurement
