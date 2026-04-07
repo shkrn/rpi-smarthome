@@ -33,6 +33,10 @@ input_boolean:
 
 ####################################
 # 照明エンティティ
+#
+# 明るさマッピング:
+#   20lx(閾値) 〜 205lx(実測最大) → 10 〜 255
+#   全灯最暗の40lx前後でスライダーが14%前後になる（自然な表示）
 ####################################
 light:
   - platform: template
@@ -50,11 +54,11 @@ light:
           {% endif %}
 
         # 明るさテンプレート
-        # 38lx(最暗)〜205lx(最大)を 10〜255 にマッピング
+        # 20lx(閾値)〜205lx(最大)を 10〜255 にマッピング
         level_template: >
           {% set lux = states('sensor.bh1750_illuminance') | float(0) %}
           {% if lux > 20 %}
-            {{ [[(((lux - 38) / (205 - 38)) * 245 + 10) | int, 10] | max, 255] | min }}
+            {{ [[(((lux - 20) / (205 - 20)) * 245 + 10) | int, 10] | max, 255] | min }}
           {% else %}
             10
           {% endif %}
@@ -99,7 +103,7 @@ light:
         set_level:
           - variables:
               target_lux: >
-                {{ ((brightness | int - 10) / 245.0 * (205 - 38) + 38) | int }}
+                {{ ((brightness | int - 10) / 245.0 * (205 - 20) + 20) | int }}
           # センサーを高速モードに切り替え（1秒間隔）
           - service: mqtt.publish
             data:
