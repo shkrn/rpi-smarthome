@@ -49,6 +49,127 @@
 
 ---
 
+## 完全配線図（クイック参照）
+
+
+### ① BME280（I2C）
+
+```text
+BME280         Raspberry Pi
+─────────────────────────────
+VIN/VCC  ────→  3.3V（物理1番）
+GND      ────→  GND（物理6番）
+SCL      ────→  GPIO3（物理5番）
+SDA      ────→  GPIO2（物理3番）
+CSB      ────→  3.3V（VINと同じ列でOK）
+SDO      ────→  GND（アドレス 0x76 のまま）
+```
+
+### ② BH1750（I2C）
+
+BME280とI2C共有できます。4本だけ。
+
+```text
+BH1750         Raspberry Pi
+─────────────────────────────
+VCC      ────→  3.3V
+GND      ────→  GND
+SCL      ────→  GPIO3（BME280と同じ線に並列）
+SDA      ────→  GPIO2（同上）
+ADDR     ────→  GND（アドレス 0x23）
+```
+
+I2C は バス共有が前提の規格なので、SCL/SDA に BME280 と BH1750 を並列でつないでも問題ありません。
+
+### ③ MH-Z19E（UART）
+
+```text
+MH-Z19E        Raspberry Pi
+─────────────────────────────
+VIN(5V)  ────→  5V（物理4番）  ← 5V必須！3.3Vでは動かない
+GND      ────→  GND（物理9番）
+TXD      ────→  GPIO15/RX（物理10番）  ← MHのTX → PiのRX
+RXD      ────→  GPIO14/TX（物理8番）   ← MHのRX → PiのTX
+```
+
+⚠️ /boot/firmware/cmdline.txt の console=serial0,115200 を先に削除してください。残ったままだと UART がコンソール専用になり MH-Z19E と通信できません。
+
+```bash
+# 実機で実行
+sudo nano /boot/firmware/cmdline.txt
+# console=serial0,115200 の部分だけ削除（1行のまま）
+sudo reboot
+```
+
+### ④ IR 受信モジュール
+
+```text
+IR受信モジュール   Raspberry Pi
+───────────────────────────────
+VCC        ────→  3.3V
+GND        ────→  GND
+OUT/DATA   ────→  GPIO17（物理11番）
+```
+
+### ⑤ IR 送信回路（MOSFET強化版）
+
+GPIO直結だと電流が足りないため、2SK2232（NchMOSFET）でスイッチングします。
+
+#### 回路図
+
+```text
+3.3V または 5V の電源レール
+  │
+  ├──[33Ω]──→ LED1（OSI5LA5A33A-B）のアノード
+  │               カソード ──→ 2SK2232 Drain
+  │
+  └──[33Ω]──→ LED2（OSI5LA5A33A-B）のアノード
+         カソード ──→ 2SK2232 Drain（LED1と同じDrain端子）
+
+GPIO18（物理12番）──[1kΩ]──→ 2SK2232 Gate
+            2SK2232 Source ──→ GND
+```
+
+※ Gate-Source 間に 10kΩ プルダウン抵抗（GPIO がハイインピになった時の誤発火防止）
+
+#### 実際の部品接続
+
+```text
+5V ──[27Ω 1W]──→ LED1(+)→LED1(-) ─┐
+5V ──[27Ω 1W]──→ LED2(+)→LED2(-) ─┤→ 2SK2232 Drain
+
+GPIO18 ──[100Ω 1/4W]──→ 2SK2232 Gate
+           ├──[220Ω 1/4W]──→ GND（プルダウン）
+           2SK2232 Source ──→ GND
+```
+
+#### LED の電流計算（5V 電源の場合）
+
+OSI5LA5A33A-B の順電圧 Vf ≈ 1.35V、推奨電流 If = 100mA
+抵抗値 = (5V - 1.35V) / 100mA = 36.5Ω → 33Ω か 39Ω（最寄りの標準値）
+
+### 全体の接続まとめ表（簡易）
+
+| 物理ピン | GPIO | 接続先 |
+|---|---|---|
+| 1 | 3.3V | BME280 VCC、BH1750 VCC、IR受信 VCC、BME280 CSB |
+| 2 | 5V | MH-Z19E VIN、IR LED 電源レール |
+| 3 | GPIO2 (SDA) | BME280 SDA、BH1750 SDA |
+| 4 | 5V | MH-Z19E VIN（物理2番と同じ） |
+| 5 | GPIO3 (SCL) | BME280 SCL、BH1750 SCL |
+| 6 | GND | BME280 GND、BME280 SDO |
+| 8 | GPIO14 (TX) | MH-Z19E RXD |
+| 9 | GND | MH-Z19E GND |
+| 10 | GPIO15 (RX) | MH-Z19E TXD |
+| 11 | GPIO17 | IR受信モジュール OUT |
+| 12 | GPIO18 | [1kΩ] → 2SK2232 Gate |
+| 20 | GND | BH1750 GND、BH1750 ADDR |
+| 25 | GND | IR受信 GND |
+| — | GND | 2SK2232 Source、10kΩプルダウン片方 |
+
+
+---
+
 ## ① BME280（温湿度・気圧センサー）
 
 ### 接続
