@@ -1,1 +1,38 @@
-[]
+# 夜間のみ：照度が上がった→全灯を検知してフラグを立てる
+# （手動リモコンで操作してもHAの状態が自動追従）
+- alias: "照明 全灯検知で状態補正"
+  id: light_on_correction
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.bh1750_illuminance
+      above: 20
+      for: "00:00:03"
+  condition:
+    - condition: sun
+      after: sunset
+      before: sunrise
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.light_assumed_on
+
+# 夜間のみ：照度が下がった→全灯が消えたと判断
+# （常夜灯か消灯かは不明なのでフラグは立てたまま。完全消灯時のみリセット）
+- alias: "照明 消灯検知で状態補正"
+  id: light_off_correction
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.bh1750_illuminance
+      below: 5
+      for: "00:00:10"
+  condition:
+    - condition: sun
+      after: sunset
+      before: sunrise
+    - condition: state
+      entity_id: input_boolean.light_assumed_on
+      state: "on"
+  action:
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.light_assumed_on
