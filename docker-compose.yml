@@ -1,0 +1,37 @@
+version: '3'
+services:
+  homeassistant:
+    container_name: homeassistant
+    # image: ghcr.io...  <-- コメントアウトまたは削除
+    build: .             # <-- 「この場所(.)にあるDockerfileを使え」という指示
+    volumes:
+      - ./config:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+    devices:
+      - /dev/i2c-0:/dev/i2c-0      # I2C bus 0
+      - /dev/i2c-1:/dev/i2c-1      # I2C bus 1（デフォルト）
+      - /dev/i2c-2:/dev/i2c-2      # I2C bus 2
+      - /dev/i2c-3:/dev/i2c-3      # I2C bus 3
+      - /dev/i2c-4:/dev/i2c-4      # I2C bus 4
+      - /dev/i2c-5:/dev/i2c-5      # I2C bus 5（合計6バス対応）
+      
+      # IR
+      - /dev/lirc0:/dev/lirc0      # 送信
+      - /dev/lirc1:/dev/lirc1      # 受信
+      
+      # GPIO
+      - /dev/mem:/dev/mem
+      - /dev/gpiomem:/dev/gpiomem
+    restart: unless-stopped
+    privileged: true               # GPIO操作に必要な権限
+    network_mode: host             # HomeKit/Alexa連携に必須
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    network_mode: host
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
