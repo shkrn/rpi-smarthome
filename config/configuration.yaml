@@ -35,12 +35,12 @@ input_boolean:
 # 照明エンティティ
 #
 # 状態判定ロジック:
-#   昼間（日の出〜日没）: センサーが日光で高値になるため input_boolean のみで判定
+#   昼間（日の出〜日没）: 日光干渉を防ぎ input_boolean のみで判定
 #   夜間（日没〜日の出）: 照度センサー実測値で判定（20lx超 = ON）
 #
 # 明るさ制御:
-#   全灯中は照度センサーの実測値をそのままレベルに変換
-#   (最暗38lx〜最大205lxを0〜255にマッピング)
+#   38lx(最暗)〜205lx(最大)を 10〜255 にマッピング
+#   フィードバックループで目標照度に到達するまでUP/DOWNを送る（最大10回）
 ####################################
 light:
   - platform: template
@@ -58,7 +58,7 @@ light:
             {{ is_state('input_boolean.light_assumed_on', 'on') }}
           {% endif %}
 
-        # 明るさテンプレート（全灯中のみ有効）
+        # 明るさテンプレート
         # 38lx(最暗)〜205lx(最大)を 10〜255 にマッピング
         level_template: >
           {% set lux = states('sensor.bh1750_illuminance') | float(0) %}
@@ -70,19 +70,21 @@ light:
 
         # ON にする
         turn_on:
-          - choose:
-              # 既に全灯なら何もしない
-              - conditions: >
-                  {{ states('sensor.bh1750_illuminance') | float(0) > 20
+          # IRを1回送る
+          - service: shell_command.send_light_step
+          - service: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.light_assumed_on
+          - delay: "00:00:01"
+          # 夜間に全灯になっていなければもう1回送る（常夜灯状態だった場合の救済）
+          - if:
+              - condition: template
+                value_template: >
+                  {{ states('sensor.bh1750_illuminance') | float(0) <= 20
                      and is_state('sun.sun', 'below_horizon') }}
-                sequence: []
-            # 消灯/常夜灯 → 1回押してON（常夜灯の場合は2回必要だが
-            # センサーで区別不可のため1回送り、結果をセンサーで確認）
-            default:
+            then:
               - service: shell_command.send_light_step
-              - service: input_boolean.turn_on
-                target:
-                  entity_id: input_boolean.light_assumed_on
+              - delay: "00:00:01"
 
         # OFF にする
         turn_off:
@@ -101,38 +103,50 @@ light:
             target:
               entity_id: input_boolean.light_assumed_on
 
-        # 明るさスライダー（全灯中のみ有効）
-        # 目標照度になるまでUP/DOWNを最大10回送るフィードバック制御
+        # 明るさスライダー
+        # whileループで目標照度に到達するまで制御（最大10回）
         set_level:
           - variables:
               target_lux: >
-                {{ ((brightness - 10) / 245 * (205 - 38) + 38) | int }}
-              current_lux: "{{ states('sensor.bh1750_illuminance') | float(0) }}"
-          # まず全灯でなければONにする
+                {{ ((brightness | int - 10) / 245.0 * (205 - 38) + 38) | int }}
+          # 全灯でなければまずONにする
           - if:
               - condition: template
-                value_template: "{{ current_lux <= 20 }}"
+                value_template: >
+                  {{ states('sensor.bh1750_illuminance') | float(0) <= 20 }}
             then:
               - service: shell_command.send_light_step
               - service: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.light_assumed_on
               - delay: "00:00:01"
-          # フィードバックループ（最大10回）
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ states('sensor.bh1750_illuminance') | float(0) <= 20
+                         and is_state('sun.sun', 'below_horizon') }}
+                then:
+                  - service: shell_command.send_light_step
+                  - delay: "00:00:01"
+          # whileループ：目標照度に到達するまで最大10回反復
           - repeat:
-              count: 10
+              while:
+                - condition: template
+                  value_template: >
+                    {% set lux = states('sensor.bh1750_illuminance') | float(0) %}
+                    {{ (lux < target_lux - 15 or lux > target_lux + 15)
+                       and repeat.index <= 10 }}
               sequence:
-                - variables:
-                    lux_now: "{{ states('sensor.bh1750_illuminance') | float(0) }}"
                 - choose:
-                    - conditions: "{{ lux_now < target_lux - 15 }}"
+                    - conditions: >
+                        {{ states('sensor.bh1750_illuminance') | float(0) < target_lux - 15 }}
                       sequence:
                         - service: shell_command.send_light_up
-                        - delay: "00:00:00.5"
-                    - conditions: "{{ lux_now > target_lux + 15 }}"
+                    - conditions: >
+                        {{ states('sensor.bh1750_illuminance') | float(0) > target_lux + 15 }}
                       sequence:
                         - service: shell_command.send_light_down
-                        - delay: "00:00:00.5"
+                - delay: "00:00:01"
 
 ####################################
 # スクリプト（ダッシュボード用ボタン）
