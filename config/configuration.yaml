@@ -6,187 +6,158 @@ frontend:
   themes: !include_dir_merge_named themes
 
 automation: !include automations.yaml
-#script: !include scripts.yaml
 scene: !include scenes.yaml
 
 ####################################
-
-# 1. 赤外線コマンドの定義（実体）
-# IRコードは config/ir/ ディレクトリに集約
+# IR コマンド定義
+####################################
 shell_command:
   send_light_step: "ir-ctl -d /dev/lirc0 --send=/config/ir/light_step.txt"
   send_light_up:   "ir-ctl -d /dev/lirc0 --send=/config/ir/light_up.txt"
   send_light_down: "ir-ctl -d /dev/lirc0 --send=/config/ir/light_down.txt"
+  send_aircon_on:  "ir-ctl -d /dev/lirc0 --send=/config/ir/panasonic_test_on_27c.txt"
+  send_aircon_off: "ir-ctl -d /dev/lirc0 --send=/config/ir/aircon_off.txt"
 
-# 2. ロジック本体（ここがヘルパー連携の心臓部）
+####################################
+# ヘルパー
+#
+# input_boolean.light_assumed_on:
+#   照度センサーで判定できない「常夜灯/消灯」を補完するフラグ。
+#   センサーが反応しない照度帯（≤20lx）での状態をHAが推測保持する。
+#   全灯時はセンサー実測値が優先されるためこのフラグは無視される。
+####################################
+input_boolean:
+  light_assumed_on:
+    name: "照明 点灯想定フラグ"
+    icon: mdi:lightbulb-outline
+
+####################################
+# 照明エンティティ
+#
+# 状態判定ロジック:
+#   昼間（日の出〜日没）: センサーが日光で高値になるため input_boolean のみで判定
+#   夜間（日没〜日の出）: 照度センサー実測値で判定（20lx超 = ON）
+#
+# 明るさ制御:
+#   全灯中は照度センサーの実測値をそのままレベルに変換
+#   (最暗38lx〜最大205lxを0〜255にマッピング)
+####################################
 light:
   - platform: template
     lights:
-      my_bedroom_light:
+      bedroom_light:
         friendly_name: "寝室の照明"
-        # 「今の状態」をヘルパーから読み取る
-        value_template: "{{ not is_state('input_select.light_mode', 'OFF') }}"
-        
-        # ■ 明るさの状態（前回の値を記憶しておく）
-        level_template: "{{ states('input_number.light_brightness') | int(255) }}"
-        # ■ ONにする時の動作
-        turn_on:
-          # もし今がOFFなら、1回押してONにする
-          - if:
-              - condition: state
-                entity_id: input_select.light_mode
-                state: "OFF"
-            then:
-              - service: shell_command.send_light_step
-              - service: input_select.select_option
-                target:
-                  entity_id: input_select.light_mode
-                data:
-                  option: "ON"
-          # もし今が常夜灯(NIGHT)なら、2回押してONにする(消灯→点灯)
-          - if:
-              - condition: state
-                entity_id: input_select.light_mode
-                state: "NIGHT"
-            then:
-              - service: shell_command.send_light_step
-              - delay: "00:00:01"
-              - service: shell_command.send_light_step
-              - service: input_select.select_option
-                target:
-                  entity_id: input_select.light_mode
-                data:
-                  option: "ON"
 
-        # ■ OFFにする時の動作
+        # 状態テンプレート
+        value_template: >
+          {% set lux = states('sensor.bh1750_illuminance') | float(0) %}
+          {% set is_night = is_state('sun.sun', 'below_horizon') %}
+          {% if is_night %}
+            {{ lux > 20 or is_state('input_boolean.light_assumed_on', 'on') }}
+          {% else %}
+            {{ is_state('input_boolean.light_assumed_on', 'on') }}
+          {% endif %}
+
+        # 明るさテンプレート（全灯中のみ有効）
+        # 38lx(最暗)〜205lx(最大)を 10〜255 にマッピング
+        level_template: >
+          {% set lux = states('sensor.bh1750_illuminance') | float(0) %}
+          {% if lux > 20 %}
+            {{ [[(((lux - 38) / (205 - 38)) * 245 + 10) | int, 10] | max, 255] | min }}
+          {% else %}
+            10
+          {% endif %}
+
+        # ON にする
+        turn_on:
+          - choose:
+              # 既に全灯なら何もしない
+              - conditions: >
+                  {{ states('sensor.bh1750_illuminance') | float(0) > 20
+                     and is_state('sun.sun', 'below_horizon') }}
+                sequence: []
+            # 消灯/常夜灯 → 1回押してON（常夜灯の場合は2回必要だが
+            # センサーで区別不可のため1回送り、結果をセンサーで確認）
+            default:
+              - service: shell_command.send_light_step
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.light_assumed_on
+
+        # OFF にする
         turn_off:
-          # もし今がONなら、2回押してOFFにする(常夜灯→消灯)
-          - if:
-              - condition: state
-                entity_id: input_select.light_mode
-                state: "ON"
-            then:
+          - choose:
+              # 全灯(lux>20) → 2回押して消灯（全灯→常夜灯→消灯）
+              - conditions: >
+                  {{ states('sensor.bh1750_illuminance') | float(0) > 20 }}
+                sequence:
+                  - service: shell_command.send_light_step
+                  - delay: "00:00:01"
+                  - service: shell_command.send_light_step
+            # 常夜灯想定 → 1回押して消灯
+            default:
               - service: shell_command.send_light_step
-              - delay: "00:00:01"
-              - service: shell_command.send_light_step
-              - service: input_select.select_option
-                target:
-                  entity_id: input_select.light_mode
-                data:
-                  option: "OFF"
-          # もし今が常夜灯(NIGHT)なら、1回押してOFFにする
-          - if:
-              - condition: state
-                entity_id: input_select.light_mode
-                state: "NIGHT"
-            then:
-              - service: shell_command.send_light_step
-              - service: input_select.select_option
-                target:
-                  entity_id: input_select.light_mode
-                data:
-                  option: "OFF"
-# ■ スライダー操作（ここが魔法のロジック！）
+          - service: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.light_assumed_on
+
+        # 明るさスライダー（全灯中のみ有効）
+        # 目標照度になるまでUP/DOWNを最大10回送るフィードバック制御
         set_level:
           - variables:
-              current_level: "{{ states('input_number.light_brightness') | int(0) }}"
-              new_level: "{{ brightness }}"
-          
-          # 【A】スライダーを10%以下(25以下)にした時 → 「常夜灯」にする
+              target_lux: >
+                {{ ((brightness - 10) / 245 * (205 - 38) + 38) | int }}
+              current_lux: "{{ states('sensor.bh1750_illuminance') | float(0) }}"
+          # まず全灯でなければONにする
           - if:
               - condition: template
-                value_template: "{{ new_level <= 25 }}"
+                value_template: "{{ current_lux <= 20 }}"
             then:
-              # 今がONなら1回押して常夜灯へ
-              - if:
-                  - condition: state
-                    entity_id: input_select.light_mode
-                    state: "ON"
-                then:
-                  - service: shell_command.send_light_step
-                  - service: input_select.select_option
-                    target:
-                      entity_id: input_select.light_mode
-                    data:
-                      option: "NIGHT"
-              # 今がOFFなら2回押して常夜灯へ (OFF->ON->常夜灯)
-              - if:
-                  - condition: state
-                    entity_id: input_select.light_mode
-                    state: "OFF"
-                then:
-                  - service: shell_command.send_light_step
-                  - delay: "00:00:01"
-                  - service: shell_command.send_light_step
-                  - service: input_select.select_option
-                    target:
-                      entity_id: input_select.light_mode
-                    data:
-                      option: "NIGHT"
+              - service: shell_command.send_light_step
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.light_assumed_on
+              - delay: "00:00:01"
+          # フィードバックループ（最大10回）
+          - repeat:
+              count: 10
+              sequence:
+                - variables:
+                    lux_now: "{{ states('sensor.bh1750_illuminance') | float(0) }}"
+                - choose:
+                    - conditions: "{{ lux_now < target_lux - 15 }}"
+                      sequence:
+                        - service: shell_command.send_light_up
+                        - delay: "00:00:00.5"
+                    - conditions: "{{ lux_now > target_lux + 15 }}"
+                      sequence:
+                        - service: shell_command.send_light_down
+                        - delay: "00:00:00.5"
 
-            # 【B】スライダーを上げた時 → 「通常点灯」にして明るさ調整
-            else:
-              # もし常夜灯(NIGHT)だったら、一旦通常ONに戻す (NIGHT->OFF->ON)
-              - if:
-                  - condition: state
-                    entity_id: input_select.light_mode
-                    state: "NIGHT"
-                then:
-                  - service: shell_command.send_light_step
-                  - delay: "00:00:01"
-                  - service: shell_command.send_light_step
-                  - service: input_select.select_option
-                    target:
-                      entity_id: input_select.light_mode
-                    data:
-                      option: "ON"
-                  - delay: "00:00:01"
-
-              # 明るさ調整コマンド連射ロジック
-              - variables:
-                  step_diff: "{{ ((new_level - current_level) / 25) | int }}"
-              - repeat:
-                  count: "{{ step_diff | abs }}"
-                  sequence:
-                    - choose:
-                        - conditions: "{{ step_diff > 0 }}"
-                          sequence:
-                            - service: shell_command.send_light_up
-                        - conditions: "{{ step_diff < 0 }}"
-                          sequence:
-                            - service: shell_command.send_light_down
-                    - delay: "00:00:00.3"
-
-          # 最後に明るさを記憶
-          - service: input_number.set_value
-            target:
-              entity_id: input_number.light_brightness
-            data:
-              value: "{{ brightness }}"
-
-# 2. ボタンの作成（スクリプト）
+####################################
+# スクリプト（ダッシュボード用ボタン）
+####################################
 script:
-  # ① 照明切り替え（既存）
-  toggle_light:
-    alias: "照明切り替え"
+  light_toggle:
+    alias: "照明 切り替え"
     icon: mdi:light-switch
     sequence:
       - service: shell_command.send_light_step
 
-  # ② 照明 明るく（新規）
-  light_brightness_up:
+  light_up:
     alias: "照明 明るく"
     icon: mdi:brightness-5
     sequence:
       - service: shell_command.send_light_up
 
-  # ③ 照明 暗く（新規）
-  light_brightness_down:
+  light_down:
     alias: "照明 暗く"
     icon: mdi:brightness-7
     sequence:
       - service: shell_command.send_light_down
 
+####################################
+# MQTT センサー
 ####################################
 mqtt:
   sensor:
